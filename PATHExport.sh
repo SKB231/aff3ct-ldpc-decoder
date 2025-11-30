@@ -1,0 +1,1 @@
+export PATH=$PATH:~/aff3ct/build/bin

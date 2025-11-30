@@ -3,6 +3,7 @@
 
 #include "Module/Decoder/LDPC/BP/Flooding/Decoder_LDPC_BP_flooding.hpp"
 #include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered.hpp"
+#include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered_SIMD.hpp"
 #include "Module/Decoder/LDPC/BP/Vertical_layered/Decoder_LDPC_BP_vertical_layered.hpp"
 #include "Tools/Code/LDPC/Matrix_handler/LDPC_matrix_handler.hpp"
 #include "Tools/Code/LDPC/Update_rule/AMS/Update_rule_AMS.hpp"
@@ -84,6 +85,7 @@ Decoder_LDPC ::get_description(cli::Argument_map_info& args) const
                      0,
                      "BP_FLOODING",
                      "BP_HORIZONTAL_LAYERED",
+                     "BP_HORIZONTAL_LAYERED_SIMD",
                      "BP_VERTICAL_LAYERED",
                      "BP_PEELING",
                      "BIT_FLIPPING");
@@ -384,6 +386,18 @@ Decoder_LDPC ::build_siso(const tools::Sparse_matrix& H,
                     this->enable_syndrome,
                     this->syndrome_depth);
         }
+    }
+    else if (this->type == "BP_HORIZONTAL_LAYERED_SIMD" && this->simd_strategy.empty())
+    {
+        // Use the new SIMD-optimized decoder
+        return new module::Decoder_LDPC_BP_horizontal_layered_SIMD<B, Q>(
+          this->K,
+          this->N_cw,
+          this->n_ite,
+          H,
+          info_bits_pos,
+          this->enable_syndrome,
+          this->syndrome_depth);
     }
     else if (this->type == "BP_VERTICAL_LAYERED" && this->simd_strategy.empty())
     {

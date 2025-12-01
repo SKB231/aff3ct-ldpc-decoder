@@ -1,19 +1,18 @@
 #include <algorithm>
+#include <cmath>
 #include <cstring>
-#include <string>
+#include <limits>
 #include <thread>
 
-#include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered_SIMD.hpp"
 #include "Tools/Code/LDPC/Syndrome/LDPC_syndrome.hpp"
 #include "Tools/Perf/common/hard_decide.h"
 #include "Tools/general_utils.h"
-
-using std::cout;
-using std::endl;
 namespace aff3ct
 {
 namespace module
 {
+using std::cout;
+using std::endl;
 template<typename B, typename R>
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::Decoder_LDPC_BP_horizontal_layered_SIMD(
   const int K,
@@ -43,6 +42,7 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::Decoder_LDPC_BP_horizontal_layere
     this->set_n_frames_per_wave(default_wave_size);
 
     this->reset();
+    cout << "RUNNING CUSTOMER LDPC DECODER " << endl;
 }
 
 template<typename B, typename R>
@@ -74,6 +74,7 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_load(const R* Y_N, const size_t 
         return;
     }
 #endif
+
     // Scalar fallback for non-float types or when AVX2 not available
     for (auto v = 0; v < (int)var_nodes[frame_id].size(); v++)
         this->var_nodes[frame_id][v] += Y_N[v];
@@ -279,29 +280,29 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_single_ite(std::vector<R>
         }
 
         // Find minimum absolute value (min-sum algorithm)
-        // Initialize with first contribution
+        // Initialize with first contribution - match standard MS implementation exactly
         R min_val = std::abs(this->contributions[0]);
-        R second_min = min_val;
+        R second_min = std::numeric_limits<R>::max(); // Initialize to max, not min_val!
         int min_idx = 0;
-        int sign = (this->contributions[0] >= 0) ? 0 : -1; // Use XOR-based sign like standard MS
+        int sign = std::signbit((float)this->contributions[0]) ? -1 : 0; // Use signbit like standard MS
 
         // Find min1, min2, and compute sign using XOR (like standard MS update rule)
+        // Use the same algorithm as Update_rule_MS: min2 = min(min2, max(var_abs, min1))
         for (auto v = 1; v < chk_degree; v++)
         {
             R abs_val = std::abs(this->contributions[v]);
-            int var_sign = (this->contributions[v] >= 0) ? 0 : -1;
+            int var_sign = std::signbit((float)this->contributions[v]) ? -1 : 0;
 
             sign ^= var_sign; // XOR for sign computation (standard MS approach)
 
+            // Use the same logic as standard MS: min2 = min(min2, max(var_abs, min1))
+            // This ensures min2 is always >= min1 and correctly tracks second minimum
+            second_min = std::min(second_min, std::max(abs_val, min_val));
+
             if (abs_val < min_val)
             {
-                second_min = min_val;
                 min_val = abs_val;
                 min_idx = v;
-            }
-            else if (abs_val < second_min)
-            {
-                second_min = abs_val;
             }
         }
 
@@ -316,7 +317,8 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_single_ite(std::vector<R>
             R res_abs = (var_abs == min_val) ? cst1 : cst2; // Use second_min if this is the min, else use min
 
             // Compute sign: XOR the overall sign with this variable's sign
-            int var_sign = (this->contributions[v] >= 0) ? 0 : -1;
+            // Use signbit to match standard MS implementation exactly
+            int var_sign = std::signbit((float)this->contributions[v]) ? -1 : 0;
             int res_sng = sign ^ var_sign;
 
             // Create message with correct sign
@@ -400,6 +402,12 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_codeword_range(const R* Y
                                                                       const size_t end_idx,
                                                                       const size_t codeword_size)
 {
+    // Each thread uses a unique frame_id based on its start_idx
+    // This ensures threads don't interfere with each other's memory
+    // Reset is called before each codeword to ensure clean state
+    const size_t thread_frame_id = start_idx % this->get_n_frames();
+    //cout << "DECODING CODEWORD " << endl;
+
     // Process each codeword in the assigned range
     for (size_t cw_idx = start_idx; cw_idx < end_idx; cw_idx++)
     {
@@ -408,21 +416,21 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_codeword_range(const R* Y
         int8_t* CWD = CWD_batch + cw_idx;
         B* V_K = V_K_batch + (cw_idx * this->K);
 
-        // Use a local frame_id that maps to our internal storage
-        // For simplicity, we'll use modulo to map to available frame slots
-        const size_t frame_id = cw_idx % this->get_n_frames();
+        // CRITICAL: Reset var_nodes and messages before processing each codeword
+        // This prevents data corruption from previous codewords
+        this->_reset(thread_frame_id);
 
         // Load the input
-        this->_load(Y_N, frame_id);
+        this->_load(Y_N, thread_frame_id);
 
         // Decode
-        auto status = this->_decode(frame_id);
+        auto status = this->_decode(thread_frame_id);
 
         // Store the output (hard decision)
         for (auto i = 0; i < this->K; i++)
         {
             const auto k = this->info_bits_pos[i];
-            V_K[i] = !(this->var_nodes[frame_id][k] >= 0);
+            V_K[i] = !(this->var_nodes[thread_frame_id][k] >= 0);
         }
 
         CWD[0] = !status;

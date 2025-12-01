@@ -25,13 +25,13 @@ template<>
 inline mipp::Reg<int16_t>
 saturate(const mipp::Reg<int16_t> v, const int16_t s)
 {
-    return mipp::sat(v, (int16_t)-s, (int16_t) + s);
+    return mipp::sat(v, (int16_t)-s, (int16_t)+s);
 }
 template<>
 inline mipp::Reg<int8_t>
 saturate(const mipp::Reg<int8_t> v, const int8_t s)
 {
-    return mipp::sat(v, (int8_t)-s, (int8_t) + s);
+    return mipp::sat(v, (int8_t)-s, (int8_t)+s);
 }
 
 template<typename B, typename R, class Update_rule>

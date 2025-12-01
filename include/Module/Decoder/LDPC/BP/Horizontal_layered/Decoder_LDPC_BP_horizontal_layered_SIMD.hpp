@@ -28,7 +28,7 @@ namespace module
  * LDPC decoding operations. Currently implements basic SIMD load/store
  * operations as a foundation for future optimizations.
  */
-template<typename B = int, typename R = float>
+template<typename B = int, typename R = double>
 class Decoder_LDPC_BP_horizontal_layered_SIMD
   : public Decoder_SISO<B, R>
   , public Decoder_LDPC_BP
@@ -159,6 +159,7 @@ class Decoder_LDPC_BP_horizontal_layered_SIMD
 }
 
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
+#define DECODER_LDPC_BP_HORIZONTAL_LAYERED_SIMD_HXX_INCLUDED
 #include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered_SIMD.hxx"
 #endif
 

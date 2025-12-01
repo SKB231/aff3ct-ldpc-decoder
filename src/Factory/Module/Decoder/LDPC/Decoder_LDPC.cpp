@@ -35,9 +35,12 @@
 #include "Module/Decoder/LDPC/BP/Flooding/SPA/Decoder_LDPC_BP_flooding_SPA.hpp"
 #include "Module/Decoder/LDPC/BP/Horizontal_layered/ONMS/Decoder_LDPC_BP_horizontal_layered_ONMS_inter.hpp"
 #include "Module/Decoder/LDPC/BP/Peeling/Decoder_LDPC_BP_peeling.hpp"
+#include <iostream>
 
 using namespace aff3ct;
 using namespace aff3ct::factory;
+using std::cout;
+using std::endl;
 
 const std::string aff3ct::factory::Decoder_LDPC_name = "Decoder LDPC";
 const std::string aff3ct::factory::Decoder_LDPC_prefix = "dec";
@@ -391,13 +394,7 @@ Decoder_LDPC ::build_siso(const tools::Sparse_matrix& H,
     {
         // Use the new SIMD-optimized decoder
         return new module::Decoder_LDPC_BP_horizontal_layered_SIMD<B, Q>(
-          this->K,
-          this->N_cw,
-          this->n_ite,
-          H,
-          info_bits_pos,
-          this->enable_syndrome,
-          this->syndrome_depth);
+          this->K, this->N_cw, this->n_ite, H, info_bits_pos, this->enable_syndrome, this->syndrome_depth);
     }
     else if (this->type == "BP_VERTICAL_LAYERED" && this->simd_strategy.empty())
     {
@@ -710,6 +707,8 @@ Decoder_LDPC ::build_siso(const tools::Sparse_matrix& H,
 #endif
     {
         if (this->implem == "MS")
+        {
+            std::cout << "RUNNING MS SIMD_INTER" << std::endl;
             return new module::Decoder_LDPC_BP_horizontal_layered_ONMS_inter<B, Q>(this->K,
                                                                                    this->N_cw,
                                                                                    this->n_ite,
@@ -719,6 +718,7 @@ Decoder_LDPC ::build_siso(const tools::Sparse_matrix& H,
                                                                                    (Q)0,
                                                                                    this->enable_syndrome,
                                                                                    this->syndrome_depth);
+        }
         if (this->implem == "NMS")
             return new module::Decoder_LDPC_BP_horizontal_layered_ONMS_inter<B, Q>(this->K,
                                                                                    this->N_cw,
@@ -1127,6 +1127,8 @@ Decoder_LDPC ::build_siso(const tools::Sparse_matrix& H,
               this->K, this->N_cw, this->n_ite, H, info_bits_pos, this->enable_syndrome, this->syndrome_depth);
     }
 
+    cout << "ABOUT TO THROW.. " << endl;
+    cout << this->type << "  " << this->simd_strategy << endl;
     throw spu::tools::cannot_allocate(__FILE__, __LINE__, __func__);
 }
 

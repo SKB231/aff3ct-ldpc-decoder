@@ -1,18 +1,19 @@
 #include <algorithm>
-#include <cmath>
 #include <cstring>
-#include <limits>
+#include <string>
 #include <thread>
 
+#include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered_SIMD.hpp"
 #include "Tools/Code/LDPC/Syndrome/LDPC_syndrome.hpp"
 #include "Tools/Perf/common/hard_decide.h"
 #include "Tools/general_utils.h"
+
+using std::cout;
+using std::endl;
 namespace aff3ct
 {
 namespace module
 {
-using std::cout;
-using std::endl;
 template<typename B, typename R>
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::Decoder_LDPC_BP_horizontal_layered_SIMD(
   const int K,
@@ -42,7 +43,6 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::Decoder_LDPC_BP_horizontal_layere
     this->set_n_frames_per_wave(default_wave_size);
 
     this->reset();
-    cout << "RUNNING CUSTOMER LDPC DECODER " << endl;
 }
 
 template<typename B, typename R>
@@ -74,7 +74,6 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_load(const R* Y_N, const size_t 
         return;
     }
 #endif
-
     // Scalar fallback for non-float types or when AVX2 not available
     for (auto v = 0; v < (int)var_nodes[frame_id].size(); v++)
         this->var_nodes[frame_id][v] += Y_N[v];
@@ -84,80 +83,31 @@ template<typename B, typename R>
 void
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_load_simd(const R* src, R* dst, const size_t len)
 {
-#ifdef __AVX2__
-    if constexpr (std::is_same_v<R, float>)
-    {
-        const size_t simd_len = len & ~(SIMD_WIDTH - 1);
-        size_t i = 0;
-
-        // Process SIMD-width chunks
-        for (; i < simd_len; i += SIMD_WIDTH)
-        {
-            __m256 y_vec = _mm256_loadu_ps(&src[i]);
-            __m256 var_vec = _mm256_loadu_ps(&dst[i]);
-            __m256 result = _mm256_add_ps(var_vec, y_vec);
-            _mm256_storeu_ps(&dst[i], result);
-        }
-
-        // Handle remaining elements
-        for (; i < len; i++)
-        {
-            dst[i] += src[i];
-        }
-    }
-#else
     // Scalar fallback
     for (size_t i = 0; i < len; i++)
     {
         dst[i] += src[i];
     }
-#endif
 }
 
 template<typename B, typename R>
 void
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_store_simd(const R* src, R* dst, const size_t len)
 {
-#ifdef __AVX2__
-    if constexpr (std::is_same_v<R, float>)
-    {
-        const size_t simd_len = len & ~(SIMD_WIDTH - 1);
-        size_t i = 0;
-
-        // Process SIMD-width chunks
-        for (; i < simd_len; i += SIMD_WIDTH)
-        {
-            __m256 src_vec = _mm256_loadu_ps(&src[i]);
-            _mm256_storeu_ps(&dst[i], src_vec);
-        }
-
-        // Handle remaining elements
-        for (; i < len; i++)
-        {
-            dst[i] = src[i];
-        }
-    }
-#else
-    // Scalar fallback
     std::memcpy(dst, src, len * sizeof(R));
-#endif
 }
 
 template<typename B, typename R>
 int
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_siso(const R* Y_N1, int8_t* CWD, R* Y_N2, const size_t frame_id)
 {
-    // memory zones initialization
     this->_load(Y_N1, frame_id);
 
-    // actual decoding
     auto status = this->_decode(frame_id);
 
-    // prepare for next round by processing extrinsic information
     for (auto v = 0; v < this->N; v++)
         Y_N2[v] = this->var_nodes[frame_id][v] - Y_N1[v];
 
-    // copy extrinsic information into var_nodes for next TURBO iteration
     std::copy(Y_N2, Y_N2 + this->N, this->var_nodes[frame_id].begin());
 
     CWD[0] = !status;
@@ -180,14 +130,9 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_siho(const R* Y_N, int8_t
         // Calculate actual number of frames in this wave
         const auto actual_wave_size = std::min(n_frames_per_wave, this->get_n_frames() - wave_start_frame);
 
-        // Data is already laid out sequentially by the task system
-        // Y_N points to: [frame0_N_bits, frame1_N_bits, ..., frameN_N_bits]
-        // So we can use it directly for batch processing
         std::vector<int8_t> CWD_batch(actual_wave_size);
         std::vector<B> V_K_batch(actual_wave_size * this->K);
 
-        // Process batch in parallel across cores
-        // Y_N is already in the correct format (sequential frames)
         this->decode_batch_parallel(Y_N, // Already sequential: frame0, frame1, ...
                                     CWD_batch.data(),
                                     V_K_batch.data(),
@@ -197,23 +142,17 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_siho(const R* Y_N, int8_t
         // Copy output back - V_K also expects sequential layout
         std::copy(V_K_batch.begin(), V_K_batch.end(), V_K);
 
-        // CWD is per-frame, but we only have one CWD pointer
-        // For now, use the first frame's status (could be improved)
         CWD[0] = CWD_batch[0];
 
         return CWD_batch[0] ? 1 : 0;
     }
     else
     {
-        // Single frame processing (n_frames_per_wave == 1)
-        // LOAD
+
         this->_load(Y_N, frame_id);
 
-        // DECODE
         auto status = this->_decode(frame_id);
 
-        // STORE
-        // take the hard decision
         for (auto i = 0; i < this->K; i++)
         {
             const auto k = this->info_bits_pos[i];
@@ -232,10 +171,8 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_siho_cw(const R* Y_N, int
     // LOAD
     this->_load(Y_N, frame_id);
 
-    // DECODE
     auto status = this->_decode(frame_id);
 
-    // STORE
     tools::hard_decide(this->var_nodes[frame_id].data(), V_N, this->N);
 
     CWD[0] = !status;
@@ -265,63 +202,50 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_single_ite(std::vector<R>
     auto kr = 0;
     auto kw = 0;
 
-    // horizontal layered scheduling - simplified min-sum algorithm
     const auto n_chk_nodes = (int)this->H.get_n_cols();
     for (auto c = 0; c < n_chk_nodes; c++)
     {
         const auto chk_degree = (int)this->H[c].size();
 
-        // Compute contributions (variable to check messages)
         for (auto v = 0; v < chk_degree; v++)
         {
-            // H matrix is in sparse matrix format
-            // Calculate the contribution by the vth var node.
             this->contributions[v] = var_nodes[this->H[c][v]] - messages[kr++];
         }
 
-        // Find minimum absolute value (min-sum algorithm)
-        // Initialize with first contribution - match standard MS implementation exactly
         R min_val = std::abs(this->contributions[0]);
-        R second_min = std::numeric_limits<R>::max(); // Initialize to max, not min_val!
+        R second_min = min_val;
         int min_idx = 0;
-        int sign = std::signbit((float)this->contributions[0]) ? -1 : 0; // Use signbit like standard MS
+        int sign = (this->contributions[0] >= 0) ? 0 : -1; // Use XOR-based sign like standard MS
 
-        // Find min1, min2, and compute sign using XOR (like standard MS update rule)
-        // Use the same algorithm as Update_rule_MS: min2 = min(min2, max(var_abs, min1))
         for (auto v = 1; v < chk_degree; v++)
         {
             R abs_val = std::abs(this->contributions[v]);
-            int var_sign = std::signbit((float)this->contributions[v]) ? -1 : 0;
+            int var_sign = (this->contributions[v] >= 0) ? 0 : -1;
 
             sign ^= var_sign; // XOR for sign computation (standard MS approach)
 
-            // Use the same logic as standard MS: min2 = min(min2, max(var_abs, min1))
-            // This ensures min2 is always >= min1 and correctly tracks second minimum
-            second_min = std::min(second_min, std::max(abs_val, min_val));
-
             if (abs_val < min_val)
             {
+                second_min = min_val;
                 min_val = abs_val;
                 min_idx = v;
             }
+            else if (abs_val < second_min)
+            {
+                second_min = abs_val;
+            }
         }
 
-        // Compute check to variable messages (min-sum algorithm)
-        // Use max(0, min) to ensure non-negative (like standard MS)
         R cst1 = std::max((R)0, second_min); // For variable with min1
         R cst2 = std::max((R)0, min_val);    // For other variables
 
         for (auto v = 0; v < chk_degree; v++)
         {
             R var_abs = std::abs(this->contributions[v]);
-            R res_abs = (var_abs == min_val) ? cst1 : cst2; // Use second_min if this is the min, else use min
-
-            // Compute sign: XOR the overall sign with this variable's sign
-            // Use signbit to match standard MS implementation exactly
-            int var_sign = std::signbit((float)this->contributions[v]) ? -1 : 0;
+            R res_abs = (var_abs == min_val) ? cst1 : cst2;
+            int var_sign = (this->contributions[v] >= 0) ? 0 : -1;
             int res_sng = sign ^ var_sign;
 
-            // Create message with correct sign
             R msg_val = (R)std::copysign(res_abs, res_sng);
 
             messages[kw] = msg_val;
@@ -402,12 +326,6 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_codeword_range(const R* Y
                                                                       const size_t end_idx,
                                                                       const size_t codeword_size)
 {
-    // Each thread uses a unique frame_id based on its start_idx
-    // This ensures threads don't interfere with each other's memory
-    // Reset is called before each codeword to ensure clean state
-    const size_t thread_frame_id = start_idx % this->get_n_frames();
-    //cout << "DECODING CODEWORD " << endl;
-
     // Process each codeword in the assigned range
     for (size_t cw_idx = start_idx; cw_idx < end_idx; cw_idx++)
     {
@@ -416,21 +334,21 @@ Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::_decode_codeword_range(const R* Y
         int8_t* CWD = CWD_batch + cw_idx;
         B* V_K = V_K_batch + (cw_idx * this->K);
 
-        // CRITICAL: Reset var_nodes and messages before processing each codeword
-        // This prevents data corruption from previous codewords
-        this->_reset(thread_frame_id);
+        // Use a local frame_id that maps to our internal storage
+        // For simplicity, we'll use modulo to map to available frame slots
+        const size_t frame_id = cw_idx % this->get_n_frames();
 
         // Load the input
-        this->_load(Y_N, thread_frame_id);
+        this->_load(Y_N, frame_id);
 
         // Decode
-        auto status = this->_decode(thread_frame_id);
+        auto status = this->_decode(frame_id);
 
         // Store the output (hard decision)
         for (auto i = 0; i < this->K; i++)
         {
             const auto k = this->info_bits_pos[i];
-            V_K[i] = !(this->var_nodes[thread_frame_id][k] >= 0);
+            V_K[i] = !(this->var_nodes[frame_id][k] >= 0);
         }
 
         CWD[0] = !status;
@@ -469,26 +387,10 @@ size_t
 Decoder_LDPC_BP_horizontal_layered_SIMD<B, R>::verify_info_bits_batch(const B* V_K_batch,
                                                                       const size_t n_codewords) const
 {
-    // Note: To verify info bits, we would need to reconstruct the full codeword
-    // using an encoder. For now, we'll verify using the soft values stored in var_nodes
-    // if they're available, or return 0 indicating we can't verify without full codewords.
-
-    // This is a placeholder - in practice, you'd need:
-    // 1. An encoder to reconstruct full codeword from info bits
-    // 2. Or access to the full decoded codeword (V_N) instead of just V_K
-
-    // For now, we can verify using the var_nodes if they contain the full codeword
-    // But this requires the var_nodes to be in sync with the batch
-    // So we'll return a count based on what we can verify
-
     size_t valid_count = 0;
-
-    // We can verify using soft syndrome check on var_nodes if available
-    // But this is limited - ideally we'd have the full codeword
     for (size_t cw_idx = 0; cw_idx < n_codewords && cw_idx < this->n_frames; cw_idx++)
     {
         const size_t frame_id = cw_idx % this->n_frames;
-        // Check if the soft values in var_nodes form a valid codeword
         if (this->check_syndrome_soft(this->var_nodes[frame_id].data()))
         {
             valid_count++;

@@ -64,6 +64,15 @@ set(CMAKE_MACOSX_RPATH 1)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add -march=native for SIMD optimizations (if not already set)
+if(NOT CMAKE_CXX_FLAGS MATCHES "-march")
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "")
+        # Default to Release if not specified, add -march=native for SIMD
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native" CACHE STRING "Flags used by the compiler during all build types." FORCE)
+        message(STATUS "AFF3CT - Added -march=native for SIMD optimizations")
+    endif()
+endif()
+
 # Specify bin and lib paths
 set(EXECUTABLE_OUTPUT_PATH bin/)
 set(LIBRARY_OUTPUT_PATH lib/)
@@ -226,6 +235,51 @@ if(AFF3CT_COMPILE_EXE)
     message(STATUS "AFF3CT - Compile: executable")
 endif(AFF3CT_COMPILE_EXE)
 
+# Test executable for QC converter
+if(AFF3CT_COMPILE_OBJ)
+    # Create object library without main.cpp
+    file(GLOB_RECURSE test_source_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+    list(FILTER test_source_files EXCLUDE REGEX "main\\.cpp$")
+    add_library(test_qc_converter_objs OBJECT ${test_source_files})
+    set_target_properties(test_qc_converter_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Copy all properties from aff3ct-obj
+    target_compile_definitions(test_qc_converter_objs PRIVATE $<TARGET_PROPERTY:aff3ct-obj,INTERFACE_COMPILE_DEFINITIONS> $<TARGET_PROPERTY:aff3ct-obj,COMPILE_DEFINITIONS>)
+    target_include_directories(test_qc_converter_objs PRIVATE 
+        $<TARGET_PROPERTY:aff3ct-obj,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:aff3ct-obj,INCLUDE_DIRECTORIES>
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_options(test_qc_converter_objs PRIVATE $<TARGET_PROPERTY:aff3ct-obj,COMPILE_OPTIONS>)
+    
+    add_executable(test_qc_converter test_qc_converter.cpp $<TARGET_OBJECTS:test_qc_converter_objs>)
+    if(AFF3CT_INCLUDE_SPU_LIB)
+        target_link_libraries(test_qc_converter PRIVATE $<TARGET_OBJECTS:cli-obj> $<TARGET_OBJECTS:spu-obj>)
+    else()
+        target_link_libraries(test_qc_converter PRIVATE $<TARGET_OBJECTS:cli-obj>)
+    endif()
+    set_target_properties(test_qc_converter PROPERTIES
+                                     POSITION_INDEPENDENT_CODE ON) # set -fpie
+    message(STATUS "AFF3CT - Compile: test_qc_converter executable")
+    
+    # Test executable for QC decoder
+    add_executable(test_qc_decoder test_qc_decoder.cpp $<TARGET_OBJECTS:test_qc_converter_objs>)
+    # Copy include directories from test_qc_converter_objs
+    target_include_directories(test_qc_decoder PRIVATE 
+        $<TARGET_PROPERTY:test_qc_converter_objs,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:test_qc_converter_objs,INCLUDE_DIRECTORIES>
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(test_qc_decoder PRIVATE $<TARGET_PROPERTY:test_qc_converter_objs,INTERFACE_COMPILE_DEFINITIONS>)
+    target_compile_options(test_qc_decoder PRIVATE $<TARGET_PROPERTY:test_qc_converter_objs,COMPILE_OPTIONS>)
+    if(AFF3CT_INCLUDE_SPU_LIB)
+        target_link_libraries(test_qc_decoder PRIVATE $<TARGET_OBJECTS:cli-obj> $<TARGET_OBJECTS:spu-obj>)
+    else()
+        target_link_libraries(test_qc_decoder PRIVATE $<TARGET_OBJECTS:cli-obj>)
+    endif()
+    set_target_properties(test_qc_decoder PROPERTIES
+                                     POSITION_INDEPENDENT_CODE ON) # set -fpie
+    message(STATUS "AFF3CT - Compile: test_qc_decoder executable")
+endif()
+
 # Library
 if(AFF3CT_COMPILE_SHARED_LIB)
     if(AFF3CT_INCLUDE_SPU_LIB)
@@ -339,7 +393,6 @@ endif()
 # ----------------------------------------------------------------------------------------------- HEADER ONLY LIBRARIES
 # ---------------------------------------------------------------------------------------------------------------------
 
-
 macro(aff3ct_target_include_directories privacy dir_build dir_install)
     if(AFF3CT_COMPILE_OBJ)
         target_include_directories(aff3ct-obj ${privacy}
@@ -361,6 +414,11 @@ macro(aff3ct_target_include_directories privacy dir_build dir_install)
                                    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/${dir_build}/>
                                    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/aff3ct-${AFF3CT_VERSION_FULL}/${dir_install}>)
     endif()
+    if(AFF3CT_COMPILE_OBJ AND TARGET test_qc_converter)
+        target_include_directories(test_qc_converter ${privacy}
+                                   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/${dir_build}/>
+                                   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/aff3ct-${AFF3CT_VERSION_FULL}/${dir_install}>)
+    endif()
 endmacro()
 
 macro(aff3ct_target_include_directories2 privacy dir)
@@ -375,6 +433,9 @@ macro(aff3ct_target_include_directories2 privacy dir)
     endif()
     if(AFF3CT_COMPILE_STATIC_LIB)
         target_include_directories(aff3ct-static-lib ${privacy} $<BUILD_INTERFACE:${dir}> $<INSTALL_INTERFACE:${dir}>)
+    endif()
+    if(AFF3CT_COMPILE_OBJ AND TARGET test_qc_converter)
+        target_include_directories(test_qc_converter ${privacy} $<BUILD_INTERFACE:${dir}> $<INSTALL_INTERFACE:${dir}>)
     endif()
 endmacro()
 
@@ -432,6 +493,12 @@ macro(aff3ct_target_link_libraries privacy lib)
     if(AFF3CT_COMPILE_STATIC_LIB)
         target_link_libraries(aff3ct-static-lib ${privacy} ${lib})
     endif(AFF3CT_COMPILE_STATIC_LIB)
+    if(AFF3CT_COMPILE_OBJ AND TARGET test_qc_converter)
+        target_link_libraries(test_qc_converter ${privacy} ${lib})
+    endif()
+    if(AFF3CT_COMPILE_OBJ AND TARGET test_qc_decoder)
+        target_link_libraries(test_qc_decoder ${privacy} ${lib})
+    endif()
 endmacro()
 
 # cpptrace

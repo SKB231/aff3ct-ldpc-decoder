@@ -72,7 +72,6 @@ class Decoder_LDPC_BP_horizontal_layered_SIMD
      * Example usage:
      * \code
      *   const size_t n_codewords = 100;
-     *   const size_t codeword_size = decoder.get_N();
      *   std::vector<R> Y_N_batch(n_codewords * codeword_size);
      *   std::vector<int8_t> CWD_batch(n_codewords);
      *   std::vector<B> V_K_batch(n_codewords * decoder.get_K());
@@ -143,7 +142,6 @@ class Decoder_LDPC_BP_horizontal_layered_SIMD
     int _decode(const size_t frame_id);
     void _decode_single_ite(std::vector<R>& var_nodes, std::vector<R>& messages);
 
-    // Multi-core processing helper functions
     void _decode_codeword_range(const R* Y_N_batch,
                                 int8_t* CWD_batch,
                                 B* V_K_batch,
@@ -151,7 +149,6 @@ class Decoder_LDPC_BP_horizontal_layered_SIMD
                                 const size_t end_idx,
                                 const size_t codeword_size);
 
-    // SIMD helper functions
     void _load_simd(const R* src, R* dst, const size_t len);
     void _store_simd(const R* src, R* dst, const size_t len);
 };
@@ -163,4 +160,4 @@ class Decoder_LDPC_BP_horizontal_layered_SIMD
 #include "Module/Decoder/LDPC/BP/Horizontal_layered/Decoder_LDPC_BP_horizontal_layered_SIMD.hxx"
 #endif
 
-#endif /* DECODER_LDPC_BP_HORIZONTAL_LAYERED_SIMD_HPP_ */
+#endif
